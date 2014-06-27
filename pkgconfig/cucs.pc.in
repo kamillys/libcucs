@@ -1,0 +1,12 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+project_name=@CMAKE_PROJECT_NAME@
+exec_prefix=${prefix}
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/include/
+
+Name: CUDA accelerated libcs library
+Description: NONE
+Version: @CMAKE_PROJECT_VERSION@
+Requires:
+Libs: -L${libdir} -lcucs
+Cflags: -I${includedir}

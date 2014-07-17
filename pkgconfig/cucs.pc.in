@@ -8,5 +8,5 @@ Name: CUDA accelerated libcs library
 Description: NONE
 Version: @CMAKE_PROJECT_VERSION@
 Requires:
-Libs: -L${libdir} -lcucs
+Libs: -L"${libdir}" -lcucs
 Cflags: -I${includedir}

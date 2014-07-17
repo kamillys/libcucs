@@ -1,12 +1,12 @@
-prefix=/usr/local
+prefix=/home/kamil/Projekty/Mgr/libcucs/dist
 project_name=cucs
 exec_prefix=${prefix}
-libdir=${prefix}/lib/x86_64-linux-gnu
+libdir=${prefix}/lib64
 includedir=${prefix}/include/
 
 Name: CUDA accelerated libcs library
 Description: NONE
 Version: 
 Requires:
-Libs: -L${libdir} -lcucs
+Libs: -L"${libdir}" -lcucs
 Cflags: -I${includedir}

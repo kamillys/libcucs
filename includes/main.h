@@ -1,1 +1,1 @@
-void foo();
+void cucs_entry();

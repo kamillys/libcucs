@@ -85,8 +85,8 @@ VectorType<float4>::type generate_spins(size_t count)
     cu::generate_sequence(d_random_floats, count);
     thrust::transform(d_random_floats.begin(), d_random_floats.end(), d_spins.begin(), make_spin() );
 
-    d_spins.erase(thrust::remove_if(d_spins.begin(), d_spins.end(), is_over_one()), d_spins.end());
-    std::cerr << "Valid: " << d_spins.size() << "\n";
+    d_spins.resize(thrust::remove_if(d_spins.begin(), d_spins.end(), is_over_one()) - d_spins.begin());
+    //std::cerr << "Valid: " << d_spins.size() << "\n";
     return d_spins;
 }
 

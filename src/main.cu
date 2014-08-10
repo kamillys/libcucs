@@ -4,6 +4,7 @@
 #include "cudalib.h"
 #include "elapsed_time.h"
 #include <algorithm>
+#include <sstream>
 
 template<typename T>
 T compute_hash_T(const std::vector<bool>& v)
@@ -52,7 +53,7 @@ u_int64_t NumberOfSetBits(u_int64_t i)
     return (((i + (i >> 4)) & 0xF0F0F0F0F0F0F0FUL) * 0x101010101010101UL) >> 56;
 }
 
-inline int getSign(const float4& v, float* squad, int i = 0)
+inline int getSign(const float4& v, const float* squad, int i = 0)
 {
     i = i * 10;
     const float s0 = squad[i+0];
@@ -79,6 +80,18 @@ inline int getSign(const float4& v, float* squad, int i = 0)
 
 
     return (signbit(sum)) ? 0 : 1;
+}
+
+static inline std::string toCoordString(const float4& spin,
+                          const std::vector<float>& data)
+{
+    std::stringstream ss;
+    for (int i=0;i<data.size()/10;++i)
+    {
+        bool v = 1==getSign(spin, data.data(), data.size()/10-1-i);
+        ss << v?'1':'0';
+    }
+    return ss.str();
 }
 
 /************************************************************************
@@ -113,19 +126,20 @@ void foobar()
 
     double startTime = getCPUTime();
 
-    cudaEvent_t start, stop;
+    cudaEvent_t start, stop, after_gen, after_uniq;
     float elapsedTime;
     cudaEventCreate(&start);
+    cudaEventCreate(&after_gen);
+    cudaEventCreate(&after_uniq);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
 
     cu::VectorType<float4>::type d_spins;
     d_spins = cu::generate_spins(count);
+    cudaEventRecord(after_gen);
     cu::make_unique_spins(d_spins, data, spinquadCount);
-
-    //cu::VectorType<cu::hashtype>::type d_hashes, d_hashmap;
-    //cu::compute_hashes(d_hashes, d_spins, d_spinquadrics);
-    //cu::make_hashmap(d_hashmap, d_hashes);
+    cudaEventRecord(after_uniq);
+    cu::locate_pairs(d_spins, data, spinquadCount);
 
 
     cudaEventRecord(stop);
@@ -134,18 +148,19 @@ void foobar()
     double endTime = getCPUTime();
     std::cout << "Time: " << elapsedTime << " ms\n";
     std::cout << "Time <alt>: " << (endTime - startTime)*1000 << "ms \n";
+    cudaEventElapsedTime(&elapsedTime, start, after_gen);
+    std::cout << "Time <1>: " << elapsedTime << " ms\n";
+    cudaEventElapsedTime(&elapsedTime, after_gen, after_uniq);
+    std::cout << "Time <2>: " << elapsedTime << " ms\n";
+    cudaEventElapsedTime(&elapsedTime, after_uniq, stop);
+    std::cout << "Time <3>: " << elapsedTime << " ms\n";
 
     thrust::host_vector<float4> spins = d_spins;
 
     for (int j=0;j<10/*spins.size()*/;++j)
     //for (int j=0;j<spins.size();++j)
     {
-        for (int i=0;i<data.size()/10;++i)
-        {
-            bool v = 1==getSign(spins[j], data.data(), (data.size()/10-1)-i);
-            std::cout << v?'1':'0';
-        }
-        std::cout << "\n";
+        std::cout << toCoordString(spins[j], data) << std::endl;
     }
     //for(int i=0;i<10;++i)
     //    std::cout << d_hashes[i] << "\n";
@@ -157,5 +172,5 @@ void cucs_entry()
     //unsigned long long seed = time(NULL);
     cu::set_cudarand_seed(seed);
     foobar();
-    foobar();
+    //foobar();
 }

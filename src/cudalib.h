@@ -1,3 +1,5 @@
+#pragma once
+
 #include <cuda.h>
 
 __device__ __inline__ int get1DGlobalIdx()
@@ -6,7 +8,7 @@ __device__ __inline__ int get1DGlobalIdx()
 }
 
 template<typename T>
-inline T inc_div(T a, T b)
+inline static T inc_div(T a, T b)
 {
     return (a+b-1) / b;
 }

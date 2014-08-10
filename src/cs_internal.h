@@ -32,12 +32,14 @@ typedef u_int32_t hashtype;
 #endif
 #define HASHBITS (8*HASHSIZE)
 
+void compute_hash_part(thrust::device_vector<float4>& spins,
+                       std::vector<float>& spinquadrics,
+                       thrust::device_vector<hashtype>& hashPart,
+                       int i,
+                       size_t& rem);
 
-//void compute_hashes(thrust::device_vector<hashtype>& hashes,
-//                    thrust::device_vector<glm::vec4>& spins,
-//                    thrust::device_vector<glm::mat4>& spinquadrics);
+void locate_pairs(thrust::device_vector<float4>& spins,
+                  std::vector<float>& spinquadrics, size_t spinquadCount);
 
-//void make_hashmap(thrust::device_vector<hashtype>& d_hashmap,
-//                  thrust::device_vector<hashtype>& d_hashes);
 
 }

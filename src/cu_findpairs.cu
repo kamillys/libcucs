@@ -2,6 +2,7 @@
 #include "cudalib.h"
 #include <thrust/binary_search.h>
 #include <thrust/sequence.h>
+#include <thrust/count.h>
 #include <bitset>
 
 #define CU_INVALID_INDEX_ITEM (static_cast<size_t>(~0))
@@ -93,15 +94,18 @@ struct FindItem
     }
 };
 
-hashtype get_hash_mask(size_t spinquadCount, int sq_j, size_t parts, int part_i)
+static inline hashtype get_hash_mask(size_t spinquadCount, int sq_j, size_t parts, int part_i)
 {
-    std::cerr << __PRETTY_FUNCTION__ << " "
-              << spinquadCount << " " << sq_j << " " << parts << " " << part_i << " ";
+    //std::cerr << __PRETTY_FUNCTION__ << " " << spinquadCount << " " << sq_j << " " << parts << " " << part_i << " ";
 
     hashtype retval = 0;
-    if (part_i == 0)
-        retval = 1;
-    std::cerr << "RV: " << retval << std::endl;
+    size_t offset = sq_j % HASHBITS;
+    size_t currentPart = sq_j / HASHBITS;
+
+    if (part_i == currentPart)
+        retval = (1 << offset);
+
+    //std::cerr << "RV: " << retval << std::endl;
     return retval;
 }
 
@@ -130,12 +134,14 @@ void locate_pairs(thrust::device_vector<float4>& spins,
         rem -= HASHBITS;
     }
     //for each spinquad:
-    for (int j=0;j<1/*spinquadCount*/;++j)
+    size_t finalCount = 0;
+    for (int j=0;j<spinquadCount;++j)
     {
         thrust::fill(lower_bound.begin(), lower_bound.end(), 0);
         thrust::fill(upper_bound.begin(), upper_bound.end(), spins.size());
         for (int i=parts-1;i>=0; --i)
         {
+            get_hash_mask(spinquadCount, j, parts, i);
             compute_hash_part(spins, spinquadrics, hashPart, i, partsSizes[i]);
 
             cutilSafeCall( cudaBindTexture(NULL, cuFpCoordsTex,
@@ -156,11 +162,12 @@ void locate_pairs(thrust::device_vector<float4>& spins,
                         FindItem(get_hash_mask(spinquadCount, j, parts, i)));
 
             cutilSafeCall( cudaUnbindTexture(cuFpCoordsTex) );
-
-
         }
         //TODO: Collect results
+        size_t count = lower_bound.size() - thrust::count(lower_bound.begin(), lower_bound.end(), CU_INVALID_INDEX_ITEM);
+        finalCount += count;
     }
+    std::cerr << "COUNT: " << finalCount << std::endl;
 //    std::cerr << "Biggest diff: " <<
 //                 *(thrust::max_element(differ_bound.begin(), differ_bound.end()))
 //              << std::endl;

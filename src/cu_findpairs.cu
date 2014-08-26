@@ -62,37 +62,88 @@ size_t findUpperBound(hashtype val, u_int32_t lb, u_int32_t ub)
     return lb;
 }
 
+__host__ __device__
+static inline hashtype get_hash_mask(size_t spinquadCount, int sq_j, size_t parts, int part_i)
+{
+    //std::cerr << __PRETTY_FUNCTION__ << " " << spinquadCount << " " << sq_j << " " << parts << " " << part_i << " ";
+
+    hashtype retval = 0;
+    size_t offset = sq_j % HASHBITS;
+    size_t currentPart = sq_j / HASHBITS;
+
+    if (part_i == currentPart)
+        retval = (1 << offset);
+
+    //std::cerr << "RV: " << retval << std::endl;
+    return retval;
+}
+
+
+static const size_t SPINQUADSETP = 4;
+#define APPLY_VECTORIZED_STUFF \
+    X(1) \
+    X(2) \
+    X(3) \
+    X(4)
+
+/* \ \
+    X(5) \
+    X(6) \
+    X(7) \
+    X(8)*/
+
 struct FindItem
 {
-    hashtype mask;
+    size_t spinquadCount;
+    int sq_j;
+    size_t parts;
+    int part_i;
+    size_t toCount;
 
-    FindItem(hashtype _) : mask(_)
+    FindItem(size_t _spinquadCount, int _sq_j, size_t _parts, int _part_i, size_t toBeCounted)
+        : spinquadCount(_spinquadCount),
+          sq_j(_sq_j),
+          parts(_parts),
+          part_i(_part_i),
+          toCount(toBeCounted)
     {
+    }
+
+    __device__
+    void compute(hashtype hash,
+                 u_int32_t lb, u_int32_t& lb_out,
+                 u_int32_t ub, u_int32_t& ub_out)
+    {
+        if (lb == CU_INVALID_INDEX_ITEM || ub == CU_INVALID_INDEX_ITEM)
+            return;
+
+        lb = findLowerBound(hash, lb, ub);
+        if (lb == CU_INVALID_INDEX_ITEM)
+            ub = CU_INVALID_INDEX_ITEM;
+        else //find upper bound - it must exists
+            ub = findUpperBound(hash, lb, ub);
+
+        lb_out = lb;
+        ub_out = ub;
     }
 
     template<typename Tuple>
     __device__
     void operator()(Tuple t)
     {
-        //All are u_int32_t, size_t
-        u_int32_t index = thrust::get<0>(t); // index
-        u_int32_t lb = thrust::get<1>(t); // lower bound
-        u_int32_t ub = thrust::get<2>(t); // upper bound
+        const u_int32_t index = thrust::get<0>(t); // index
+        const hashtype hash = tex1Dfetch(cuFpCoordsTex, index);
+        hashtype mask;
 
-        if (lb == CU_INVALID_INDEX_ITEM || ub == CU_INVALID_INDEX_ITEM)
-            return;
-
-        hashtype val = mask ^ tex1Dfetch(cuFpCoordsTex, index);
-
-        lb = findLowerBound(val, lb, ub);
-        if (lb == CU_INVALID_INDEX_ITEM)
-            ub = CU_INVALID_INDEX_ITEM;
-        else //find upper bound - it must exists
-            ub = findUpperBound(val, lb, ub);
-
-        thrust::get<1>(t) = lb;
-        thrust::get<2>(t) = ub;
-        thrust::get<3>(t) = ub - lb;
+#define X(iter) \
+        if (toCount >= iter) { \
+        mask = get_hash_mask(spinquadCount, sq_j+iter, parts, part_i); \
+        compute(mask ^ hash, \
+                thrust::get<2*iter-1>(t), thrust::get<2*iter-1>(t), \
+                thrust::get<2*iter-0>(t), thrust::get<2*iter-0>(t)); \
+        }
+        APPLY_VECTORIZED_STUFF
+#undef X
     }
 };
 
@@ -115,38 +166,50 @@ struct PairIndexCopier
     }
 };
 
-static inline hashtype get_hash_mask(size_t spinquadCount, int sq_j, size_t parts, int part_i)
+static void extract_result(size_t spins_size,
+                           const thrust::device_vector<u_int32_t>& lower_bound,
+                           std::vector<u_int32_t>& output1,
+                           std::vector<u_int32_t>& output2)
 {
-    //std::cerr << __PRETTY_FUNCTION__ << " " << spinquadCount << " " << sq_j << " " << parts << " " << part_i << " ";
+    thrust::device_vector<u_int32_t> indices(spins_size);
+    thrust::sequence(indices.begin(), indices.end());
 
-    hashtype retval = 0;
-    size_t offset = sq_j % HASHBITS;
-    size_t currentPart = sq_j / HASHBITS;
+    thrust::device_vector<u_int32_t> counterPairs;
 
-    if (part_i == currentPart)
-        retval = (1 << offset);
+    cutilSafeCall( cudaBindTexture(NULL, cuFpBndIdxTex,
+                                   thrust::raw_pointer_cast(lower_bound.data()),
+                                   sizeof(u_int32_t)*lower_bound.size()) );
 
-    //std::cerr << "RV: " << retval << std::endl;
-    return retval;
+    indices.resize(thrust::remove_if(indices.begin(), indices.end(), PairIndexCleaner()) - indices.begin());
+    counterPairs.resize(indices.size());
+    thrust::transform(indices.begin(), indices.end(), counterPairs.begin(), PairIndexCopier());
+    cutilSafeCall( cudaUnbindTexture(cuFpBndIdxTex) );
+
+    size_t currentSize = output1.size();
+    output1.resize(output1.size() + indices.size());
+    output2.resize(output2.size() + counterPairs.size());
+    thrust::copy(indices.begin(), indices.end(), output1.begin()+currentSize);
+    thrust::copy(counterPairs.begin(), counterPairs.end(), output2.begin()+currentSize);
 }
 
 void locate_pairs(thrust::device_vector<float4>& spins,
-                  std::vector<float>& spinquadrics, size_t spinquadCount)
+                  std::vector<float>& spinquadrics,
+                  size_t spinquadCount)
 {
     //std::cerr << "SPINQUADS: " << spinquadCount << "\n";
 
     std::vector<u_int32_t> output1;
     std::vector<u_int32_t> output2;
 
-    thrust::device_vector<u_int32_t> lower_bound(spins.size());
-    thrust::device_vector<u_int32_t> upper_bound(spins.size());
-    thrust::device_vector<u_int32_t> differ_bound(spins.size());
+#define X(iter) \
+    thrust::device_vector<u_int32_t> lower_bound_##iter(spins.size()); \
+    thrust::device_vector<u_int32_t> upper_bound_##iter(spins.size());
+    APPLY_VECTORIZED_STUFF
+#undef X
+
 
     thrust::device_vector<hashtype> hashPart(spins.size());
     size_t parts = inc_div<size_t>(spinquadrics.size()/10, HASHBITS);
-
-    thrust::fill(lower_bound.begin(), lower_bound.end(), 0);
-    thrust::fill(upper_bound.begin(), upper_bound.end(), spins.size());
 
     std::vector<size_t> partsSizes(parts);
 
@@ -158,13 +221,18 @@ void locate_pairs(thrust::device_vector<float4>& spins,
     }
     //for each spinquad:
     size_t finalCount = 0;
-    for (int j=0;j<spinquadCount;++j)
+    for (int j=0;j<spinquadCount;j+=SPINQUADSETP)
     {
-        thrust::fill(lower_bound.begin(), lower_bound.end(), 0);
-        thrust::fill(upper_bound.begin(), upper_bound.end(), spins.size());
+        size_t spinQuadsToCompute = std::min<size_t>(spinquadCount - j, SPINQUADSETP);
+        //std::cerr << "spinQuadsToCompute: " << spinQuadsToCompute << std::endl;
+
+#define X(iter) \
+    thrust::fill(lower_bound_##iter.begin(), lower_bound_##iter.end(), 0); \
+    thrust::fill(upper_bound_##iter.begin(), upper_bound_##iter.end(), spins.size());
+    APPLY_VECTORIZED_STUFF
+#undef X
         for (int i=parts-1;i>=0; --i)
         {
-            get_hash_mask(spinquadCount, j, parts, i);
             compute_hash_part(spins, spinquadrics, hashPart, i, partsSizes[i]);
 
             cutilSafeCall( cudaBindTexture(NULL, cuFpCoordsTex,
@@ -173,42 +241,32 @@ void locate_pairs(thrust::device_vector<float4>& spins,
 
             thrust::for_each(
                         thrust::make_zip_iterator(thrust::make_tuple(thrust::counting_iterator<u_int32_t>(0),
-                                                                     lower_bound.begin(),
-                                                                     upper_bound.begin(),
-                                                                     differ_bound.begin()
+                                                         #define X(iter) \
+                                                                     lower_bound_##iter.begin(), \
+                                                                     upper_bound_##iter.begin(),
+                                                             APPLY_VECTORIZED_STUFF
+                                                         #undef X
+                                                                     thrust::counting_iterator<u_int32_t>(0)
                                                                      )),
                         thrust::make_zip_iterator(thrust::make_tuple(thrust::counting_iterator<u_int32_t>(spins.size()),
-                                                                     lower_bound.end(),
-                                                                     upper_bound.end(),
-                                                                     differ_bound.begin()
+                                                         #define X(iter) \
+                                                                     lower_bound_##iter.end(), \
+                                                                     upper_bound_##iter.end(),
+                                                             APPLY_VECTORIZED_STUFF
+                                                         #undef X
+                                                                     thrust::counting_iterator<u_int32_t>(spins.size())
                                                                      )),
-                        FindItem(get_hash_mask(spinquadCount, j, parts, i)));
+                        FindItem(spinquadCount, j, parts, i, spinQuadsToCompute));
 
             cutilSafeCall( cudaUnbindTexture(cuFpCoordsTex) );
         }
-        //TODO: Collect results
-        //size_t count = lower_bound.size() - thrust::count(lower_bound.begin(), lower_bound.end(), CU_INVALID_INDEX_ITEM);
-        //finalCount += count;
-
+        //Collect results
         {
-            thrust::device_vector<u_int32_t> indices(spins.size());
-            thrust::sequence(indices.begin(), indices.end());
-            thrust::device_vector<u_int32_t> counterPairs;
 
-            cutilSafeCall( cudaBindTexture(NULL, cuFpBndIdxTex,
-                                           thrust::raw_pointer_cast(lower_bound.data()),
-                                           sizeof(u_int32_t)*lower_bound.size()) );
-            indices.resize(thrust::remove_if(indices.begin(), indices.end(), PairIndexCleaner()) - indices.begin());
-            //std::cerr << "COUNT<X>: " << indices.size() << std::endl;
-            counterPairs.resize(indices.size());
-            thrust::transform(indices.begin(), indices.end(), counterPairs.begin(), PairIndexCopier());
-            cutilSafeCall( cudaUnbindTexture(cuFpBndIdxTex) );
-
-            size_t currentSize = output1.size();
-            output1.resize(output1.size() + indices.size());
-            output2.resize(output2.size() + counterPairs.size());
-            thrust::copy(indices.begin(), indices.end(), output1.begin()+currentSize);
-            thrust::copy(counterPairs.begin(), counterPairs.end(), output2.begin()+currentSize);
+#define X(iter) \
+    if (spinQuadsToCompute >= iter) extract_result(spins.size(), lower_bound_##iter, output1, output2);
+    APPLY_VECTORIZED_STUFF
+#undef X
         }
     }
     std::cerr << "COUNT: " << finalCount << std::endl;

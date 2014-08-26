@@ -118,6 +118,7 @@ void foobar()
      */
     std::vector<float> data = cu::readFile("/home/kamil/Projekty/Mgr/cucs_demo/build/spin_quadrics_compress.txt");
     size_t spinquadCount = data.size() / 10;
+    //thrust::device_vector<float> data = h_data;
     //Resize
     //fill_zeros(data);
 
@@ -172,5 +173,5 @@ void cucs_entry()
     //unsigned long long seed = time(NULL);
     cu::set_cudarand_seed(seed);
     foobar();
-    //foobar();
+    foobar();
 }

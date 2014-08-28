@@ -19,7 +19,7 @@ void set_cudarand_seed(unsigned long long seed);
 VectorType<float4>::type generate_spins(size_t count);
 
 void make_unique_spins(thrust::device_vector<float4>& spins,
-                       std::vector<float>& spinquadrics,
+                       const std::vector<float>& spinquadrics,
                        size_t spinquadCount);
 
 #if 0 || USE_64BIT_HASH
@@ -34,14 +34,14 @@ typedef u_int32_t hashtype;
 #define HASHBITS (8*HASHSIZE)
 
 void compute_hash_part(thrust::device_vector<float4>& spins,
-                       std::vector<float>& spinquadrics,
+                       const std::vector<float>& spinquadrics,
                        thrust::device_vector<hashtype>& hashPart,
                        int i,
                        size_t& rem);
 
 void locate_pairs(thrust::device_vector<float4>& spins,
-                  std::vector<float>& spinquadrics,
-                  size_t spinquadCount);
+                  const std::vector<float>& spinquadrics,
+                  size_t spinquadCount, std::vector<u_int32_t>& output1, std::vector<u_int32_t>& output2);
 
 
 }

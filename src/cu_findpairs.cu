@@ -168,8 +168,8 @@ struct PairIndexCopier
 
 static void extract_result(size_t spins_size,
                            const thrust::device_vector<u_int32_t>& lower_bound,
-                           std::vector<u_int32_t>& output1,
-                           std::vector<u_int32_t>& output2)
+                           thrust::device_vector<u_int32_t>& output1,
+                           thrust::device_vector<u_int32_t>& output2)
 {
     thrust::device_vector<u_int32_t> indices(spins_size);
     thrust::sequence(indices.begin(), indices.end());
@@ -193,13 +193,15 @@ static void extract_result(size_t spins_size,
 }
 
 void locate_pairs(thrust::device_vector<float4>& spins,
-                  std::vector<float>& spinquadrics,
-                  size_t spinquadCount)
+                  const std::vector<float>& spinquadrics,
+                  size_t spinquadCount,
+                  std::vector<u_int32_t>& output1,
+                  std::vector<u_int32_t>& output2)
 {
     //std::cerr << "SPINQUADS: " << spinquadCount << "\n";
 
-    std::vector<u_int32_t> output1;
-    std::vector<u_int32_t> output2;
+    thrust::device_vector<u_int32_t> d_output1;
+    thrust::device_vector<u_int32_t> d_output2;
 
 #define X(iter) \
     thrust::device_vector<u_int32_t> lower_bound_##iter(spins.size()); \
@@ -207,10 +209,7 @@ void locate_pairs(thrust::device_vector<float4>& spins,
     APPLY_VECTORIZED_STUFF
 #undef X
 
-
-    thrust::device_vector<hashtype> hashPart(spins.size());
     size_t parts = inc_div<size_t>(spinquadrics.size()/10, HASHBITS);
-
     std::vector<size_t> partsSizes(parts);
 
     size_t rem = spinquadCount;
@@ -219,8 +218,18 @@ void locate_pairs(thrust::device_vector<float4>& spins,
         partsSizes[i] = std::min<size_t>(rem, HASHBITS);
         rem -= HASHBITS;
     }
+#ifdef USE_HUGE_GPU_MEM
+    std::vector<thrust::device_vector<hashtype> > hashPart(parts, thrust::device_vector<hashtype>(spins.size()));
+
+    for (int i=0;i<parts; ++i)
+    {
+        compute_hash_part(spins, spinquadrics, hashPart[i], i, partsSizes[i]);
+    }
+#else
+    thrust::device_vector<hashtype> hashPart(spins.size());
+#endif
+
     //for each spinquad:
-    size_t finalCount = 0;
     for (int j=0;j<spinquadCount;j+=SPINQUADSETP)
     {
         size_t spinQuadsToCompute = std::min<size_t>(spinquadCount - j, SPINQUADSETP);
@@ -233,11 +242,12 @@ void locate_pairs(thrust::device_vector<float4>& spins,
 #undef X
         for (int i=parts-1;i>=0; --i)
         {
+#ifndef USE_HUGE_GPU_MEM
             compute_hash_part(spins, spinquadrics, hashPart, i, partsSizes[i]);
-
-            cutilSafeCall( cudaBindTexture(NULL, cuFpCoordsTex,
-                                           thrust::raw_pointer_cast(hashPart.data()), sizeof(hashtype)*hashPart.size()) );
-
+            cutilSafeCall( cudaBindTexture(NULL, cuFpCoordsTex, thrust::raw_pointer_cast(hashPart.data()), sizeof(hashtype)*hashPart.size()) );
+#else
+            cutilSafeCall( cudaBindTexture(NULL, cuFpCoordsTex, thrust::raw_pointer_cast(hashPart[i].data()), sizeof(hashtype)*hashPart[i].size()) );
+#endif
 
             thrust::for_each(
                         thrust::make_zip_iterator(thrust::make_tuple(thrust::counting_iterator<u_int32_t>(0),
@@ -264,26 +274,17 @@ void locate_pairs(thrust::device_vector<float4>& spins,
         {
 
 #define X(iter) \
-    if (spinQuadsToCompute >= iter) extract_result(spins.size(), lower_bound_##iter, output1, output2);
+    if (spinQuadsToCompute >= iter) extract_result(spins.size(), lower_bound_##iter, d_output1, d_output2);
     APPLY_VECTORIZED_STUFF
 #undef X
         }
     }
-    std::cerr << "COUNT: " << finalCount << std::endl;
-    std::cerr << "SIZES: " << output1.size() << " " << output2.size() << std::endl;
-//    std::cerr << "Biggest diff: " <<
-//                 *(thrust::max_element(differ_bound.begin(), differ_bound.end()))
-//              << std::endl;
-
-//    for (int i=0;i<10;++i)
-//        //for (int i=0;i<spins.size();++i)
-//    {
-//        std::cerr << i << " " << std::bitset<32>(hashPart[i]) << " : "
-//                  << lower_bound[i] << " - " << upper_bound[i]
-//                     << " <> " << differ_bound[i]
-//                        << " " << hashPart[i] << std::endl;
-//    }
-//    std::cerr << "=======================================" << std::endl;
+    output1.resize(d_output1.size());
+    thrust::copy(d_output1.begin(), d_output1.end(), output1.begin());
+    output2.resize(d_output2.size());
+    thrust::copy(d_output2.begin(), d_output2.end(), output2.begin());
+    //std::cerr << "COUNT: " << finalCount << std::endl;
+    //std::cerr << "SIZES: " << output1.size() << " " << output2.size() << std::endl;
 
 
 }

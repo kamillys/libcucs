@@ -126,6 +126,8 @@ void foobar()
     //size_t count = 256;
 
     double startTime = getCPUTime();
+    std::vector<u_int32_t> output1;
+    std::vector<u_int32_t> output2;
 
     cudaEvent_t start, stop, after_gen, after_uniq;
     float elapsedTime;
@@ -140,8 +142,7 @@ void foobar()
     cudaEventRecord(after_gen);
     cu::make_unique_spins(d_spins, data, spinquadCount);
     cudaEventRecord(after_uniq);
-    cu::locate_pairs(d_spins, data, spinquadCount);
-
+    cu::locate_pairs(d_spins, data, spinquadCount, output1, output2);
 
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
@@ -156,12 +157,23 @@ void foobar()
     cudaEventElapsedTime(&elapsedTime, after_uniq, stop);
     std::cout << "Time <3>: " << elapsedTime << " ms\n";
 
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+    cudaEventDestroy(after_gen);
+    cudaEventDestroy(after_uniq);
     thrust::host_vector<float4> spins = d_spins;
 
-    for (int j=0;j<10/*spins.size()*/;++j)
+    std::cout << output1.size() << " " << output2.size() << std::endl;
+
+    for (int j=0;j<output1.size();++j)
+    {
+        //std::cout << output1[j] << " " << output2[j] << std::endl;
+    }
+
+    //for (int j=0;j<10/*spins.size()*/;++j)
     //for (int j=0;j<spins.size();++j)
     {
-        std::cout << toCoordString(spins[j], data) << std::endl;
+        //std::cout << toCoordString(spins[j], data) << std::endl;
     }
     //for(int i=0;i<10;++i)
     //    std::cout << d_hashes[i] << "\n";
@@ -171,7 +183,157 @@ void cucs_entry()
 {
     unsigned long long seed = 2568305073;// time(NULL);
     //unsigned long long seed = time(NULL);
+    cucs_set_seed(seed);
+    foobar();
+    //foobar();
+}
+
+void cucs_set_seed(unsigned long long seed)
+{
     cu::set_cudarand_seed(seed);
-    foobar();
-    foobar();
+}
+
+std::vector<float4> cucs_compute_random_spinors(size_t count)
+{
+    cudaEvent_t start, stop;
+    float elapsedTime;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
+    cu::VectorType<float4>::type spins = cu::generate_spins(count);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    cudaEventElapsedTime(&elapsedTime, start, stop);
+    std::cout << __FUNCTION__ << ": Time: " << elapsedTime << " ms\n";
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+
+    std::vector<float4> retval(spins.size());
+    thrust::copy(spins.begin(), spins.end(), retval.begin());
+    return retval;
+}
+
+std::vector<float4> cucs_compute_random_unique_spinors(
+        const std::vector<float>& spinquads,
+        size_t initialCout)
+{
+    size_t spinquadCount = spinquads.size() / 10;
+    cudaEvent_t start, after_gen, stop;
+    float elapsedTime;
+    cudaEventCreate(&start);
+    cudaEventCreate(&after_gen);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
+    thrust::device_vector<float4> spins = cu::generate_spins(initialCout);
+    cudaEventRecord(after_gen);
+    cu::make_unique_spins(spins, spinquads, spinquadCount);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    cudaEventElapsedTime(&elapsedTime, start, stop);
+    std::cout << __FUNCTION__ << ": Time: " << elapsedTime << " ms\n";
+    cudaEventElapsedTime(&elapsedTime, start, after_gen);
+    std::cout << __FUNCTION__ << ": Time<1>: " << elapsedTime << " ms\n";
+    cudaEventElapsedTime(&elapsedTime, after_gen, stop);
+    std::cout << __FUNCTION__ << ": Time<2>: " << elapsedTime << " ms\n";
+    cudaEventDestroy(start);
+    cudaEventDestroy(after_gen);
+    cudaEventDestroy(stop);
+
+    std::vector<float4> retval(spins.size());
+    thrust::copy(spins.begin(), spins.end(), retval.begin());
+    return retval;
+}
+
+void cucs_compute_unique_spinors(
+        const std::vector<float>& spinquads,
+        std::vector<float4>& spinors)
+{
+    size_t spinquadCount = spinquads.size() / 10;
+    cudaEvent_t start, stop;
+    float elapsedTime;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
+    thrust::device_vector<float4> spins = spinors;
+    cu::make_unique_spins(spins, spinquads, spinquadCount);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    cudaEventElapsedTime(&elapsedTime, start, stop);
+    std::cout << __FUNCTION__ << ": Time: " << elapsedTime << " ms\n";
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+
+    spinors.resize(spins.size());
+    thrust::copy(spins.begin(), spins.end(), spinors.begin());
+}
+
+void cucs_compute_spinors_and_neighbours(
+        const std::vector<float>& spinquads,
+        size_t initialCout,
+        /*out*/ std::vector<float4>& spinors,
+        /*out*/ std::vector<u_int32_t>& neighbour_index_1,
+        /*out*/ std::vector<u_int32_t>& neighbour_index_2)
+{
+    size_t spinquadCount = spinquads.size() / 10;
+    cudaEvent_t start, after_gen, after_uniq, stop;
+    float elapsedTime;
+    cudaEventCreate(&start);
+    cudaEventCreate(&after_gen);
+    cudaEventCreate(&after_uniq);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
+    thrust::device_vector<float4> spins = cu::generate_spins(initialCout);
+    cudaEventRecord(after_gen);
+    cu::make_unique_spins(spins, spinquads, spinquadCount);
+    cudaEventRecord(after_uniq);
+    cu::locate_pairs(spins, spinquads, spinquadCount, neighbour_index_1, neighbour_index_2);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    cudaEventElapsedTime(&elapsedTime, start, stop);
+    std::cout << __FUNCTION__ << ": Time: " << elapsedTime << " ms\n";
+    cudaEventElapsedTime(&elapsedTime, start, after_gen);
+    std::cout << __FUNCTION__ << ": Time<1>: " << elapsedTime << " ms\n";
+    cudaEventElapsedTime(&elapsedTime, after_gen, after_uniq);
+    std::cout << __FUNCTION__ << ": Time<2>: " << elapsedTime << " ms\n";
+    cudaEventElapsedTime(&elapsedTime, after_uniq, stop);
+    std::cout << __FUNCTION__ << ": Time<3>: " << elapsedTime << " ms\n";
+    cudaEventDestroy(start);
+    cudaEventDestroy(after_gen);
+    cudaEventDestroy(after_uniq);
+    cudaEventDestroy(stop);
+
+    spinors.resize(spins.size());
+    thrust::copy(spins.begin(), spins.end(), spinors.begin());
+}
+
+void cucs_compute_neighbours(
+        const std::vector<float>& spinquads,
+        const std::vector<float4>& spinors,
+        /*out*/ std::vector<u_int32_t>& neighbour_index_1,
+        /*out*/ std::vector<u_int32_t>& neighbour_index_2)
+{
+    size_t spinquadCount = spinquads.size() / 10;
+    cudaEvent_t start, stop;
+    float elapsedTime;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
+    thrust::device_vector<float4> spins = spinors;
+    cu::locate_pairs(spins, spinquads, spinquadCount, neighbour_index_1, neighbour_index_2);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    cudaEventElapsedTime(&elapsedTime, start, stop);
+    std::cout << __FUNCTION__ << ": Time: " << elapsedTime << " ms\n";
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
 }

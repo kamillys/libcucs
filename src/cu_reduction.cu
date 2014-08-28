@@ -69,52 +69,6 @@ struct ComputeHash
     }
 };
 
-struct SpinSortLt
-{
-    size_t count;
-
-    SpinSortLt(size_t s)
-        : count(s) { }
-
-    __device__
-    //__host__
-    bool operator() (const float4& a, const float4& b)
-    {
-        // a < b
-        //return getSign(a, d1) < getSign(b, d1);
-        int j=0;
-        //for (int i = count - 1; i >= 0; i--)
-        for (int i = 0; i < count; i++)
-        {
-            j++;
-            if (j > 3) break;
-            //int s1 = getSign(a, i);
-            //int s2 = getSign(b, i);
-            //if (s1 == s2) continue;
-            //return s1 < s2;
-        }
-        return false;
-    }
-};
-
-struct SpinorsSorter
-{
-    __device__
-    bool operator()(const u_int32_t& _a, const u_int32_t& _b)
-    {
-        return tex1Dfetch(coordPartTex, _a) < tex1Dfetch(coordPartTex, _b);
-    }
-};
-
-struct ReorderCoords
-{
-    __device__
-    hashtype operator()(const u_int32_t& _a)
-    {
-        return tex1Dfetch(coordPartTex, _a);
-    }
-};
-
 struct ReorderSpins
 {
     __device__
@@ -155,7 +109,7 @@ struct SpinIndexCleaner
 };
 
 void compute_hash_part(thrust::device_vector<float4>& spins,
-                       std::vector<float>& spinquadrics,
+                       const std::vector<float>& spinquadrics,
                        thrust::device_vector<hashtype>& hashPart,
                        int i,
                        size_t& rem)
@@ -173,68 +127,53 @@ void compute_hash_part(thrust::device_vector<float4>& spins,
 }
 
 void make_unique_spins(thrust::device_vector<float4>& spins,
-                       std::vector<float>& spinquadrics,
+                       const std::vector<float>& spinquadrics,
                        size_t spinquadCount)
 {
     size_t parts = inc_div<size_t>(spinquadrics.size()/10, HASHBITS);
 
     /*
-     * TODO:
-     * Refactor code.
      * - Sort & compute parts
-     * - Simpler reorder
      * - Reduce & compute parts
     */
-    std::vector<thrust::device_vector<hashtype> > hashPart(parts);
-    thrust::device_vector<u_int32_t> elemsIds(spins.size());
-    thrust::sequence(elemsIds.begin(), elemsIds.end());
+
+    thrust::device_vector<hashtype> hashPart(spins.size());
     {
-        std::vector<size_t> partsSizes(parts);
+        size_t partsSizes;
         size_t rem = spinquadCount;
         for (int i=0;i<parts; ++i)
         {
-            partsSizes[i] = std::min<size_t>(rem, HASHBITS);
+            partsSizes = std::min<size_t>(rem, HASHBITS);
             rem -= HASHBITS;
-            hashPart[i].resize(spins.size());
-            compute_hash_part(spins, spinquadrics, hashPart[i], i, partsSizes[i]);
-
-            cutilSafeCall( cudaBindTexture(NULL, coordPartTex, thrust::raw_pointer_cast(hashPart[i].data()), sizeof(hashtype)*hashPart[i].size()) );
-            thrust::stable_sort(elemsIds.begin(), elemsIds.end(), SpinorsSorter());
-            cutilSafeCall( cudaUnbindTexture(coordPartTex) );
+            compute_hash_part(spins, spinquadrics, hashPart, i, partsSizes);
+            thrust::stable_sort_by_key(hashPart.begin(), hashPart.end(), spins.begin());
         }
-    }
-    //Reorder
-    {
-        thrust::device_vector<hashtype> hash_tmp(spins.size());
-        for (int i=0;i<parts; ++i)
-        {
-            cutilSafeCall( cudaBindTexture(NULL, coordPartTex, thrust::raw_pointer_cast(hashPart[i].data()), sizeof(hashtype)*hashPart[i].size()) );
-            thrust::transform(elemsIds.begin(), elemsIds.end(), hash_tmp.begin(), ReorderCoords());
-            cutilSafeCall( cudaUnbindTexture(coordPartTex) );
-            hashPart[i].swap(hash_tmp);
-        }
-        hash_tmp.clear();
-        thrust::device_vector<float4> spins_tmp(spins.size());
-        cutilSafeCall( cudaBindTexture(NULL, spinTex, thrust::raw_pointer_cast(spins.data()), sizeof(float4)*spins.size()) );
-        thrust::transform(elemsIds.begin(), elemsIds.end(), spins_tmp.begin(), ReorderSpins());
-        cutilSafeCall( cudaUnbindTexture(spinTex) );
-        std::swap(spins, spins_tmp);
-        spins_tmp.clear();
     }
     //Make unique
     //Algo: Check if elem before has the same hash
     //if yes, +1
     //Remove all that has counter equal to part count
     {
-        thrust::device_vector<u_int32_t> hash_counter(spins.size());
-        thrust::fill(hash_counter.begin(), hash_counter.end(), 0);
+        thrust::device_vector<u_int32_t> hash_counter(spins.size(), 0);
+        thrust::device_vector<u_int32_t> elemsIds(spins.size());
         thrust::sequence(elemsIds.begin(), elemsIds.end());
+        size_t partsSizes;
+        size_t rem = spinquadCount;
         for (int i=0;i<parts; ++i)
         {
-            cutilSafeCall( cudaBindTexture(NULL, coordPartTex, thrust::raw_pointer_cast(hashPart[i].data()), sizeof(hashtype)*hashPart[i].size()) );
-            thrust::transform(elemsIds.begin(), elemsIds.end(), hash_counter.begin(), hash_counter.begin(), SpinHashChecker());
+            partsSizes = std::min<size_t>(rem, HASHBITS);
+            rem -= HASHBITS;
+            compute_hash_part(spins, spinquadrics, hashPart, i, partsSizes);
+
+            cutilSafeCall( cudaBindTexture(NULL, coordPartTex, thrust::raw_pointer_cast(hashPart.data()), sizeof(hashtype)*hashPart.size()) );
+            thrust::transform(thrust::counting_iterator<u_int32_t>(0),
+                              thrust::counting_iterator<u_int32_t>(spins.size()),
+                              hash_counter.begin(),
+                              hash_counter.begin(),
+                              SpinHashChecker());
             cutilSafeCall( cudaUnbindTexture(coordPartTex) );
         }
+        thrust::sequence(elemsIds.begin(), elemsIds.end());
         cutilSafeCall( cudaBindTexture(NULL, coordPartTex, thrust::raw_pointer_cast(hash_counter.data()), sizeof(hashtype)*hash_counter.size()) );
         elemsIds.resize(thrust::remove_if(elemsIds.begin(), elemsIds.end(), SpinIndexCleaner(parts)) - elemsIds.begin());
         cutilSafeCall( cudaUnbindTexture(coordPartTex) );

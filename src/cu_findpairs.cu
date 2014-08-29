@@ -123,6 +123,9 @@ struct FindItem
         else //find upper bound - it must exists
             ub = findUpperBound(hash, lb, ub);
 
+        if (ub <= lb)
+            ub = lb = CU_INVALID_INDEX_ITEM;
+
         lb_out = lb;
         ub_out = ub;
     }
@@ -137,7 +140,7 @@ struct FindItem
 
 #define X(iter) \
         if (toCount >= iter) { \
-        mask = get_hash_mask(spinquadCount, sq_j+iter, parts, part_i); \
+        mask = get_hash_mask(spinquadCount, sq_j+iter-1, parts, part_i); \
         compute(mask ^ hash, \
                 thrust::get<2*iter-1>(t), thrust::get<2*iter-1>(t), \
                 thrust::get<2*iter-0>(t), thrust::get<2*iter-0>(t)); \
@@ -242,11 +245,11 @@ void locate_pairs(thrust::device_vector<float4>& spins,
 #undef X
         for (int i=parts-1;i>=0; --i)
         {
-#ifndef USE_HUGE_GPU_MEM
+#ifdef USE_HUGE_GPU_MEM
+                    cutilSafeCall( cudaBindTexture(NULL, cuFpCoordsTex, thrust::raw_pointer_cast(hashPart[i].data()), sizeof(hashtype)*hashPart[i].size()) );
+#else
             compute_hash_part(spins, spinquadrics, hashPart, i, partsSizes[i]);
             cutilSafeCall( cudaBindTexture(NULL, cuFpCoordsTex, thrust::raw_pointer_cast(hashPart.data()), sizeof(hashtype)*hashPart.size()) );
-#else
-            cutilSafeCall( cudaBindTexture(NULL, cuFpCoordsTex, thrust::raw_pointer_cast(hashPart[i].data()), sizeof(hashtype)*hashPart[i].size()) );
 #endif
 
             thrust::for_each(
@@ -274,8 +277,8 @@ void locate_pairs(thrust::device_vector<float4>& spins,
         {
 
 #define X(iter) \
-    if (spinQuadsToCompute >= iter) extract_result(spins.size(), lower_bound_##iter, d_output1, d_output2);
-    APPLY_VECTORIZED_STUFF
+            if (spinQuadsToCompute >= iter) extract_result(spins.size(), lower_bound_##iter, d_output1, d_output2);
+            APPLY_VECTORIZED_STUFF
 #undef X
         }
     }
@@ -283,10 +286,6 @@ void locate_pairs(thrust::device_vector<float4>& spins,
     thrust::copy(d_output1.begin(), d_output1.end(), output1.begin());
     output2.resize(d_output2.size());
     thrust::copy(d_output2.begin(), d_output2.end(), output2.begin());
-    //std::cerr << "COUNT: " << finalCount << std::endl;
-    //std::cerr << "SIZES: " << output1.size() << " " << output2.size() << std::endl;
-
-
 }
 
 }

@@ -6,54 +6,8 @@
 #include <algorithm>
 #include <sstream>
 
-template<typename T>
-T compute_hash_T(const std::vector<bool>& v)
-{
-    T h(0);
-    T sh(0);
-    for (size_t i = 0 ; i <  v.size(); ++i)
-    {
-        T val = v[i] ? 1 : 0;
-        h ^= val << sh;
-        sh = (sh+1) % (8*sizeof(T));
-    }
-    return h;
-}
 
-u_int32_t compute_hash_32(const std::vector<bool>& v)
-{
-    u_int32_t h (0);
-    u_int32_t sh = 0;
-    for (size_t i = 0 ; i <  v.size(); ++i)
-    {
-        u_int32_t val = v[i] ? 1 : 0;
-        h ^= val << sh;
-        sh = (sh+1) % 32;
-    }
-    return h;
-}
-
-template<typename T>
-bool isPowerOfTwo (T x)
-{
-    return ((x != 0) && ((x & (~x + 1)) == x));
-}
-
-u_int32_t NumberOfSetBits(u_int32_t i)
-{
-    i = i - ((i >> 1) & 0x55555555);
-    i = (i & 0x33333333) + ((i >> 2) & 0x33333333);
-    return (((i + (i >> 4)) & 0x0F0F0F0F) * 0x01010101) >> 24;
-}
-
-u_int64_t NumberOfSetBits(u_int64_t i)
-{
-    i = i - ((i >> 1) & 0x5555555555555555UL);
-    i = (i & 0x3333333333333333UL) + ((i >> 2) & 0x3333333333333333UL);
-    return (((i + (i >> 4)) & 0xF0F0F0F0F0F0F0FUL) * 0x101010101010101UL) >> 56;
-}
-
-inline int getSign(const float4& v, const float* squad, int i = 0)
+static inline int getSign(const float4& v, const float* squad, int i)
 {
     i = i * 10;
     const float s0 = squad[i+0];
@@ -82,8 +36,8 @@ inline int getSign(const float4& v, const float* squad, int i = 0)
     return (signbit(sum)) ? 0 : 1;
 }
 
-static inline std::string toCoordString(const float4& spin,
-                          const std::vector<float>& data)
+std::string cucs_to_coord_string(const float4& spin,
+                                 const std::vector<float>& data)
 {
     std::stringstream ss;
     for (int i=0;i<data.size()/10;++i)
@@ -92,100 +46,6 @@ static inline std::string toCoordString(const float4& spin,
         ss << v?'1':'0';
     }
     return ss.str();
-}
-
-/************************************************************************
- ************************************************************************
- ************************************************************************
- ************************************************************************
- ***********************************************************************/
-
-void fill_zeros(std::vector<float>& data)
-{
-    size_t HB = HASHBITS * 10;
-    size_t size = data.size();
-    size_t toAdd = HB - (size%HB);
-    if(toAdd != HB)
-        data.resize(size+toAdd, 0);
-}
-
-void foobar()
-{
-    /*
-        glm::mat4 d1 = glm::make_mat4(data[i].m);
-        bool v = glm::dot(s1,  (d1 * s1)) >= 0;
-        q[i] = v;
-     */
-    std::vector<float> data = cu::readFile("/home/kamil/Projekty/Mgr/cucs_demo/build/spin_quadrics_compress.txt");
-    size_t spinquadCount = data.size() / 10;
-    //thrust::device_vector<float> data = h_data;
-    //Resize
-    //fill_zeros(data);
-
-    size_t count = 1000000;
-    //size_t count = 256;
-
-    double startTime = getCPUTime();
-    std::vector<u_int32_t> output1;
-    std::vector<u_int32_t> output2;
-
-    cudaEvent_t start, stop, after_gen, after_uniq;
-    float elapsedTime;
-    cudaEventCreate(&start);
-    cudaEventCreate(&after_gen);
-    cudaEventCreate(&after_uniq);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start);
-
-    cu::VectorType<float4>::type d_spins;
-    d_spins = cu::generate_spins(count);
-    cudaEventRecord(after_gen);
-    cu::make_unique_spins(d_spins, data, spinquadCount);
-    cudaEventRecord(after_uniq);
-    cu::locate_pairs(d_spins, data, spinquadCount, output1, output2);
-
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-    cudaEventElapsedTime(&elapsedTime, start, stop);
-    double endTime = getCPUTime();
-    std::cout << "Time: " << elapsedTime << " ms\n";
-    std::cout << "Time <alt>: " << (endTime - startTime)*1000 << "ms \n";
-    cudaEventElapsedTime(&elapsedTime, start, after_gen);
-    std::cout << "Time <1>: " << elapsedTime << " ms\n";
-    cudaEventElapsedTime(&elapsedTime, after_gen, after_uniq);
-    std::cout << "Time <2>: " << elapsedTime << " ms\n";
-    cudaEventElapsedTime(&elapsedTime, after_uniq, stop);
-    std::cout << "Time <3>: " << elapsedTime << " ms\n";
-
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
-    cudaEventDestroy(after_gen);
-    cudaEventDestroy(after_uniq);
-    thrust::host_vector<float4> spins = d_spins;
-
-    std::cout << output1.size() << " " << output2.size() << std::endl;
-
-    for (int j=0;j<output1.size();++j)
-    {
-        //std::cout << output1[j] << " " << output2[j] << std::endl;
-    }
-
-    //for (int j=0;j<10/*spins.size()*/;++j)
-    //for (int j=0;j<spins.size();++j)
-    {
-        //std::cout << toCoordString(spins[j], data) << std::endl;
-    }
-    //for(int i=0;i<10;++i)
-    //    std::cout << d_hashes[i] << "\n";
-}
-
-void cucs_entry()
-{
-    unsigned long long seed = 2568305073;// time(NULL);
-    //unsigned long long seed = time(NULL);
-    cucs_set_seed(seed);
-    foobar();
-    //foobar();
 }
 
 void cucs_set_seed(unsigned long long seed)
@@ -206,7 +66,7 @@ std::vector<float4> cucs_compute_random_spinors(size_t count)
     cudaEventSynchronize(stop);
 
     cudaEventElapsedTime(&elapsedTime, start, stop);
-    std::cout << __FUNCTION__ << ": Time: " << elapsedTime << " ms\n";
+    std::cerr << __FUNCTION__ << ": Time: " << elapsedTime << " ms\n";
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
 
@@ -234,11 +94,11 @@ std::vector<float4> cucs_compute_random_unique_spinors(
     cudaEventSynchronize(stop);
 
     cudaEventElapsedTime(&elapsedTime, start, stop);
-    std::cout << __FUNCTION__ << ": Time: " << elapsedTime << " ms\n";
+    std::cerr << __FUNCTION__ << ": Time: " << elapsedTime << " ms\n";
     cudaEventElapsedTime(&elapsedTime, start, after_gen);
-    std::cout << __FUNCTION__ << ": Time<1>: " << elapsedTime << " ms\n";
+    std::cerr << __FUNCTION__ << ": Time<1>: " << elapsedTime << " ms\n";
     cudaEventElapsedTime(&elapsedTime, after_gen, stop);
-    std::cout << __FUNCTION__ << ": Time<2>: " << elapsedTime << " ms\n";
+    std::cerr << __FUNCTION__ << ": Time<2>: " << elapsedTime << " ms\n";
     cudaEventDestroy(start);
     cudaEventDestroy(after_gen);
     cudaEventDestroy(stop);
@@ -265,7 +125,7 @@ void cucs_compute_unique_spinors(
     cudaEventSynchronize(stop);
 
     cudaEventElapsedTime(&elapsedTime, start, stop);
-    std::cout << __FUNCTION__ << ": Time: " << elapsedTime << " ms\n";
+    std::cerr << __FUNCTION__ << ": Time: " << elapsedTime << " ms\n";
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
 
@@ -298,13 +158,13 @@ void cucs_compute_spinors_and_neighbours(
     cudaEventSynchronize(stop);
 
     cudaEventElapsedTime(&elapsedTime, start, stop);
-    std::cout << __FUNCTION__ << ": Time: " << elapsedTime << " ms\n";
+    std::cerr << __FUNCTION__ << ": Time: " << elapsedTime << " ms\n";
     cudaEventElapsedTime(&elapsedTime, start, after_gen);
-    std::cout << __FUNCTION__ << ": Time<1>: " << elapsedTime << " ms\n";
+    std::cerr << __FUNCTION__ << ": Time<1>: " << elapsedTime << " ms\n";
     cudaEventElapsedTime(&elapsedTime, after_gen, after_uniq);
-    std::cout << __FUNCTION__ << ": Time<2>: " << elapsedTime << " ms\n";
+    std::cerr << __FUNCTION__ << ": Time<2>: " << elapsedTime << " ms\n";
     cudaEventElapsedTime(&elapsedTime, after_uniq, stop);
-    std::cout << __FUNCTION__ << ": Time<3>: " << elapsedTime << " ms\n";
+    std::cerr << __FUNCTION__ << ": Time<3>: " << elapsedTime << " ms\n";
     cudaEventDestroy(start);
     cudaEventDestroy(after_gen);
     cudaEventDestroy(after_uniq);
@@ -333,7 +193,7 @@ void cucs_compute_neighbours(
     cudaEventSynchronize(stop);
 
     cudaEventElapsedTime(&elapsedTime, start, stop);
-    std::cout << __FUNCTION__ << ": Time: " << elapsedTime << " ms\n";
+    std::cerr << __FUNCTION__ << ": Time: " << elapsedTime << " ms\n";
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
 }

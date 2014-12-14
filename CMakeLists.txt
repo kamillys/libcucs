@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 2.8)
 #
 # to set build type: -DCMAKE_BUILD_TYPE=...
 #set(CMAKE_BUILD_TYPE "Release")
-#set(CMAKE_BUILD_TYPE "Debug")
+set(CMAKE_BUILD_TYPE "Debug")
 
 find_package(PkgConfig)
 
@@ -30,6 +30,9 @@ endif()
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/includes)
 include_directories(${INCLUDEDIRS})
+
+#defines
+add_definitions(-DUSE_HUGE_GPU_MEM)
 
 ##Project sources
 file(GLOB_RECURSE SRC_LIST ${PROJECT_SOURCES_PATH}/*)

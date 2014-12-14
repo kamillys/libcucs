@@ -13,6 +13,7 @@ namespace cu
 {
 
 static texture<hashtype, 1, cudaReadModeElementType> cuFpCoordsTex;
+static texture<hashtype, 1, cudaReadModeElementType> cuFpCoordsHashTex;
 static texture<u_int32_t, 1, cudaReadModeElementType>   cuFpBndIdxTex;
 
 
@@ -169,6 +170,15 @@ struct PairIndexCopier
     }
 };
 
+struct XorComputer
+{
+    __device__ __host__
+    hashtype operator()(hashtype a, hashtype b)
+    {
+        return a ^ b;
+    }
+};
+
 static void extract_result(size_t spins_size,
                            const thrust::device_vector<u_int32_t>& lower_bound,
                            thrust::device_vector<u_int32_t>& output1,
@@ -221,12 +231,14 @@ void locate_pairs(thrust::device_vector<float4>& spins,
         partsSizes[i] = std::min<size_t>(rem, HASHBITS);
         rem -= HASHBITS;
     }
+    //thrust::device_vector<hashtype> coord_hash(spins.size(), 0);
 #ifdef USE_HUGE_GPU_MEM
     std::vector<thrust::device_vector<hashtype> > hashPart(parts, thrust::device_vector<hashtype>(spins.size()));
 
     for (int i=0;i<parts; ++i)
     {
         compute_hash_part(spins, spinquadrics, hashPart[i], i, partsSizes[i]);
+        //thrust::transform(coord_hash.begin(), coord_hash.end(), hashPart[i].begin(), coord_hash.begin(), XorComputer());
     }
 #else
     thrust::device_vector<hashtype> hashPart(spins.size());
@@ -253,21 +265,19 @@ void locate_pairs(thrust::device_vector<float4>& spins,
 #endif
 
             thrust::for_each(
-                        thrust::make_zip_iterator(thrust::make_tuple(thrust::counting_iterator<u_int32_t>(0),
+                        thrust::make_zip_iterator(thrust::make_tuple(thrust::counting_iterator<u_int32_t>(0)
                                                          #define X(iter) \
-                                                                     lower_bound_##iter.begin(), \
-                                                                     upper_bound_##iter.begin(),
+                                                                     ,lower_bound_##iter.begin(), \
+                                                                      upper_bound_##iter.begin()
                                                              APPLY_VECTORIZED_STUFF
                                                          #undef X
-                                                                     thrust::counting_iterator<u_int32_t>(0)
                                                                      )),
-                        thrust::make_zip_iterator(thrust::make_tuple(thrust::counting_iterator<u_int32_t>(spins.size()),
+                        thrust::make_zip_iterator(thrust::make_tuple(thrust::counting_iterator<u_int32_t>(spins.size())
                                                          #define X(iter) \
-                                                                     lower_bound_##iter.end(), \
-                                                                     upper_bound_##iter.end(),
+                                                                     ,lower_bound_##iter.end(), \
+                                                                     upper_bound_##iter.end()
                                                              APPLY_VECTORIZED_STUFF
                                                          #undef X
-                                                                     thrust::counting_iterator<u_int32_t>(spins.size())
                                                                      )),
                         FindItem(spinquadCount, j, parts, i, spinQuadsToCompute));
 
